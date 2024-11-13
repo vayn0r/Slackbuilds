@@ -1,0 +1,63 @@
+#!/bin/sh
+VERSION=1.3.2
+BUILD=${BUILD:-2}
+TAG=${TAG:-erik}
+git clone https://github.com/microsoft/vcpkg
+cd vcpkg
+git checkout 2023.04.15
+cd ..
+./vcpkg/bootstrap-vcpkg.sh --disableMetrics
+export VCPKG_ROOT=$PWD/vcpkg
+./vcpkg/vcpkg --disable-metrics install --x-install-root="$VCPKG_ROOT/installed" libvpx libyuv opus aom
+wget https://github.com/rustdesk/rustdesk/archive/refs/tags/${VERSION}.tar.gz
+tar -xvf ${VERSION}.tar.gz
+cd rustdesk-${VERSION}
+mkdir -p target/release
+wget https://raw.githubusercontent.com/c-smile/sciter-sdk/master/bin.lnx/x64/libsciter-gtk.so
+chmod 0755 libsciter-gtk.so
+mv libsciter-gtk.so target/release
+VCPKG_ROOT=${VCPKG_ROOT} cargo build --release
+
+mkdir -p /tmp/package-rustdesk
+mkdir -p /tmp/package-rustdesk/opt/rustdesk
+mkdir -p /tmp/package-rustdesk/usr/bin
+mkdir -p /tmp/package-rustdesk/usr/share/applications
+mkdir -p /tmp/package-rustdesk/usr/share/icons/hicolor/32x32/apps
+mkdir -p /tmp/package-rustdesk/usr/share/icons/hicolor/64x64/apps
+mkdir -p /tmp/package-rustdesk/usr/share/icons/hicolor/128x128/apps
+mkdir -p /tmp/package-rustdesk/usr/share/icons/hicolor/1024x1024/apps
+
+cd ../
+cp rustdesk-${VERSION}/res/rustdesk.desktop /tmp/package-rustdesk/usr/share/applications
+cp rustdesk-${VERSION}/res/32x32.png /tmp/package-rustdesk/usr/share/icons/hicolor/32x32/apps/rustdesk.png
+cp rustdesk-${VERSION}/res/64x64.png /tmp/package-rustdesk/usr/share/icons/hicolor/64x64/apps/rustdesk.png
+cp rustdesk-${VERSION}/res/128x128.png /tmp/package-rustdesk/usr/share/icons/hicolor/128x128/apps/rustdesk.png
+cp rustdesk-${VERSION}/res/icon.png /tmp/package-rustdesk/usr/share/icons/hicolor/1024x1024/apps/rustdesk.png
+
+cp -R rustdesk-${VERSION}/libs/ /tmp/package-rustdesk/opt/rustdesk
+cp -R rustdesk-${VERSION}/src/ /tmp/package-rustdesk/opt/rustdesk
+cp -R rustdesk-${VERSION}/flutter /tmp/package-rustdesk/opt/rustdesk
+cp -R rustdesk-${VERSION}/libs/ /tmp/package-rustdesk/opt/rustdesk
+cp rustdesk-${VERSION}/target/release/rustdesk /tmp/package-rustdesk/opt/rustdesk
+cp rustdesk-${VERSION}/target/release/libsciter-gtk.so /tmp/package-rustdesk/opt/rustdesk
+
+cat << EOF > /tmp/package-rustdesk/usr/bin/rustdesk
+#!/bin/bash
+
+if [ -z $1]; then
+   params=""
+else
+   params=$1
+fi
+
+if [ -d /opt/rustdesk ]; then
+   cd /opt/rustdesk
+   export NO_AT_BRIDGE=1
+   ./rustdesk $params
+fi
+EOF
+chmod +x /tmp/package-rustdesk/usr/bin/rustdesk
+cd /tmp/package-rustdesk
+find $PKG | xargs file | grep -e "executable" -e "shared object" | grep ELF \
+| cut -f 1 -d : | xargs strip --strip-unneeded 2> /dev/null
+/sbin/makepkg --linkadd y --chown n ../rustdesk-${VERSION}-x86_64-${BUILD}${TAG}.txz
