@@ -1,7 +1,10 @@
 #!/bin/sh
-VERSION=1.3.2
-BUILD=${BUILD:-2}
+
+VERSION=${VERSION:-1.3.2}
+BUILD=${BUILD:-3}
 TAG=${TAG:-erik}
+PKG=${TMP:-/tmp/package-rustdesk}
+
 git clone https://github.com/microsoft/vcpkg
 cd vcpkg
 git checkout 2023.04.15
@@ -18,30 +21,30 @@ chmod 0755 libsciter-gtk.so
 mv libsciter-gtk.so target/release
 VCPKG_ROOT=${VCPKG_ROOT} cargo build --release
 
-mkdir -p /tmp/package-rustdesk
-mkdir -p /tmp/package-rustdesk/opt/rustdesk
-mkdir -p /tmp/package-rustdesk/usr/bin
-mkdir -p /tmp/package-rustdesk/usr/share/applications
-mkdir -p /tmp/package-rustdesk/usr/share/icons/hicolor/32x32/apps
-mkdir -p /tmp/package-rustdesk/usr/share/icons/hicolor/64x64/apps
-mkdir -p /tmp/package-rustdesk/usr/share/icons/hicolor/128x128/apps
-mkdir -p /tmp/package-rustdesk/usr/share/icons/hicolor/1024x1024/apps
+mkdir -p ${PKG}
+mkdir -p ${PKG}/opt/rustdesk
+mkdir -p ${PKG}/usr/bin
+mkdir -p ${PKG}/usr/share/applications
+mkdir -p ${PKG}/usr/share/icons/hicolor/32x32/apps
+mkdir -p ${PKG}/usr/share/icons/hicolor/64x64/apps
+mkdir -p ${PKG}/usr/share/icons/hicolor/128x128/apps
+mkdir -p ${PKG}/usr/share/icons/hicolor/1024x1024/apps
 
 cd ../
-cp rustdesk-${VERSION}/res/rustdesk.desktop /tmp/package-rustdesk/usr/share/applications
-cp rustdesk-${VERSION}/res/32x32.png /tmp/package-rustdesk/usr/share/icons/hicolor/32x32/apps/rustdesk.png
-cp rustdesk-${VERSION}/res/64x64.png /tmp/package-rustdesk/usr/share/icons/hicolor/64x64/apps/rustdesk.png
-cp rustdesk-${VERSION}/res/128x128.png /tmp/package-rustdesk/usr/share/icons/hicolor/128x128/apps/rustdesk.png
-cp rustdesk-${VERSION}/res/icon.png /tmp/package-rustdesk/usr/share/icons/hicolor/1024x1024/apps/rustdesk.png
+cp rustdesk-${VERSION}/res/rustdesk.desktop ${PKG}/usr/share/applications
+cp rustdesk-${VERSION}/res/32x32.png ${PKG}/usr/share/icons/hicolor/32x32/apps/rustdesk.png
+cp rustdesk-${VERSION}/res/64x64.png ${PKG}/usr/share/icons/hicolor/64x64/apps/rustdesk.png
+cp rustdesk-${VERSION}/res/128x128.png ${PKG}/usr/share/icons/hicolor/128x128/apps/rustdesk.png
+cp rustdesk-${VERSION}/res/icon.png ${PKG}/usr/share/icons/hicolor/1024x1024/apps/rustdesk.png
 
-cp -R rustdesk-${VERSION}/libs/ /tmp/package-rustdesk/opt/rustdesk
-cp -R rustdesk-${VERSION}/src/ /tmp/package-rustdesk/opt/rustdesk
-cp -R rustdesk-${VERSION}/flutter /tmp/package-rustdesk/opt/rustdesk
-cp -R rustdesk-${VERSION}/libs/ /tmp/package-rustdesk/opt/rustdesk
-cp rustdesk-${VERSION}/target/release/rustdesk /tmp/package-rustdesk/opt/rustdesk
-cp rustdesk-${VERSION}/target/release/libsciter-gtk.so /tmp/package-rustdesk/opt/rustdesk
+cp -R rustdesk-${VERSION}/libs/ ${PKG}/opt/rustdesk
+cp -R rustdesk-${VERSION}/src/ ${PKG}/opt/rustdesk
+cp -R rustdesk-${VERSION}/flutter ${PKG}/opt/rustdesk
+cp -R rustdesk-${VERSION}/libs/ ${PKG}/opt/rustdesk
+cp rustdesk-${VERSION}/target/release/rustdesk ${PKG}/opt/rustdesk
+cp rustdesk-${VERSION}/target/release/libsciter-gtk.so ${PKG}/opt/rustdesk
 
-cat << EOF > /tmp/package-rustdesk/usr/bin/rustdesk
+cat << EOF > ${PKG}/usr/bin/rustdesk
 #!/bin/bash
 
 if [ -z $1]; then
@@ -56,8 +59,11 @@ if [ -d /opt/rustdesk ]; then
    ./rustdesk $params
 fi
 EOF
-chmod +x /tmp/package-rustdesk/usr/bin/rustdesk
-cd /tmp/package-rustdesk
+
+chmod +x ${PKG}/usr/bin/rustdesk
+cd ${PKG}
+
 find $PKG | xargs file | grep -e "executable" -e "shared object" | grep ELF \
 | cut -f 1 -d : | xargs strip --strip-unneeded 2> /dev/null
+
 /sbin/makepkg --linkadd y --chown n ../rustdesk-${VERSION}-x86_64-${BUILD}${TAG}.txz
