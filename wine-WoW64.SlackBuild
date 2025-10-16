@@ -1,0 +1,325 @@
+#
+# Run 'sh wine.SlackBuild' to build a Slackware package.
+# The package (.txz or .tgz) plus descriptive .txt file are created in /tmp .
+# Install using 'installpkg'.
+#
+# -----------------------------------------------------------------------------
+
+# Set initial variables:
+PRGNAM=wine
+SRCVER=${SRCVER:-"10.16"}
+VERSION=$(echo ${SRCVER} | tr '-' '.')
+BUILD=${BUILD:-5}
+NUMJOBS=${NUMJOBS:-16}
+MONO=10.3.0
+GECKO=2.47.4
+TAG=${TAG:-erik}
+
+# Set the following variable to tgz if you wish to build a package for a
+# Slackware version < 13.0.
+PKG_FORMAT=${PKG_FORMAT:-"txz"}
+
+# The following variables can be set into the script or running it like
+# this: OPENGL=NO ./wine.SlackBuild
+# Use 'YES | NO' not 'yes | no': case-sensitive !
+
+# If your video card does not support hardware accelerated OpenGL,
+# then set the variable to "NO"
+OPENGL=${OPENGL:-"YES"}
+
+# If you set REQUIRE_FONTFORGE to "NO" then the script won't refuse to
+# build wine in case you don't have fontforge installed (it is needed
+# to generate the required base fonts).
+REQUIRE_FONTFORGE=${REQUIRE_FONTFORGE:-"YES"}
+
+# If you set REQUIREDBUILDER_USE to "YES" then the script will create a
+# dependency list (slack_required) from a scan of the compiled software.
+REQUIREDBUILDER_USE=${REQUIREDBUILDER_USE:-"YES"}
+
+# Where do we look for sources?
+SRCDIR=$(cd $(dirname $0); pwd)
+
+# Place to build (TMP) package (PKG) and output (OUTPUT) the program:
+TMP=${TMP:-/tmp/build}
+PKG=${TMP}/package-${PRGNAM}
+OUTPUT=${OUTPUT:-/tmp}
+
+SOURCE="${SRCDIR}/${PRGNAM}-${SRCVER}.tar.xz"
+SRCURL="https://dl.winehq.org/wine/source/10.x/${PRGNAM}-${SRCVER}.tar.xz"
+
+##
+## --- with a little luck, you won't have to edit below this point --- ##
+##
+
+# Determine target architecture
+if [ -z "${MARCH}" ]; then
+   MARCH=`uname -m`
+   case "${MARCH}" in
+      i?86)
+         export ARCH=i686
+      ;;
+      arm*)
+         export ARCH=arm
+      ;;
+      *)
+         export ARCH=${MARCH}
+      ;;
+   esac
+fi
+
+echo -e "\E[0;32m+-----------------------+\E[0;0m"
+echo -e "\E[0;32m|     ARCH=${ARCH}      |\E[0;0m"
+echo -e "\E[0;32m+-----------------------+\E[0;0m"
+
+case "${ARCH}" in
+   arm)
+      # Use Embedded Application Binary Interface. EABI was created as a common
+      # binary interface that should permit code compiled with a specific
+      # toolchain/compiler to be linked to projects compiled with another one.
+      # arm-slackware-linux-gnueabi and arm-slackware-linux are different
+      # targets.
+      BUILD_ARCH=${ARCH}"-slackware-linux-gnueabi"
+      ENABLE_64=""
+      SLKCFLAGS="-O2"
+   ;;
+   i486)
+      BUILD_ARCH=${ARCH}"-slackware-linux"
+      ENABLE_64=""
+      SLKCFLAGS="-O2 -march=i486 -mtune=i686"; SLKLDFLAGS="-L/usr/lib -ldl"; LIBDIRSUFFIX=""
+   ;;
+   i686)
+      BUILD_ARCH=${ARCH}"-slackware-linux"
+      ENABLE_64=""
+      SLKCFLAGS="-O2 -march=i686 -mtune=i686"; SLKLDFLAGS="-L/usr/lib -ldl"; LIBDIRSUFFIX=""
+   ;;
+   powerpc)
+      BUILD_ARCH=${ARCH}"-slackware-linux"
+      ENABLE_64=""
+      SLKCFLAGS="-O2"
+   ;;
+   s390)
+      BUILD_ARCH=${ARCH}"-slackware-linux"
+      ENABLE_64=""
+      SLKCFLAGS="-O2"
+   ;;
+   x86_64)
+      BUILD_ARCH=${ARCH}"-slackware-linux"
+      ENABLE_64=" --enable-win64"
+      SLKCFLAGS="-O2 -fPIC"; SLKLDFLAGS="-L/usr/lib64"; LIBDIRSUFFIX="64"
+      NUMJOBS="2"
+   ;;
+esac
+
+# Exit the script on errors. Moved here for architecture detection to work.
+set -e
+trap 'echo "$0 FAILED on line $LINENO!" | tee ${OUTPUT}/${PRGNAM}_error.log' ERR
+# Catch unitialized variables:
+set -u
+P1=${1:-1}
+
+# Prepare a sane build environment:
+mkdir -p ${TMP}/tmp-${PRGNAM}  # Location to build the source
+rm -rf ${TMP}/tmp-${PRGNAM}/*  # Remove the remnants of previous build and continue
+mkdir -p ${PKG}                # Place for the package to be built
+rm -rf ${PKG}/*                # We always erase old package's contents
+mkdir -p ${OUTPUT}             # Place for the package to be saved
+
+# Source files availability:
+if ! [ -f ${SOURCE} ]; then
+   # Source archive not present. Try to download it.
+   if ! [ "x${SRCURL}" == "x" ]; then
+      # Check if the SRCDIR is writable at all - if not, download to ${OUTPUT}
+      [ -w "${SRCDIR}" ] || SOURCE="${OUTPUT}/$(basename $SOURCE)"
+      echo "Source '$(basename ${SOURCE})' not available yet..."
+      echo "Will download file to $(dirname $SOURCE)"
+      wget -nv -T 20 -O "${SOURCE}" "${SRCURL}" || true
+      if [ $? -ne 0 -o ! -s "${SOURCE}" ]; then
+         echo "Downloading '$(basename ${SOURCE})' failed... aborting the build."
+         mv -f "${SOURCE}" "${SOURCE}".FAIL
+         exit 1
+      fi
+   else
+      echo "File '$(basename ${SOURCE})' not available... aborting the build."
+      exit 1
+   fi
+fi
+
+if [ "$P1" == "--download" ]; then
+  echo "Download complete."
+  exit 0
+fi
+
+# --- PACKAGE BUILDING ---
+
+echo -e "\E[0;32m+-----------------------+\E[0;0m"
+echo -e "\E[0;32m| Start SlackBuild WINE |\E[0;0m"
+echo -e "\E[0;32m+-----------------------+\E[0;0m"
+
+if ! which fontforge >/dev/null 2>&1 ; then
+   echo "##"
+   echo "## The 'fontforge' program does not seem to be installed."
+   echo "## Wine uses fontforge to generate several TTF fonts (tahoma,tahomabd,marlett)"
+   echo "## that your Windows programs may want to use!"
+   if [ "YES" != "${REQUIRE_FONTFORGE}" ]; then 
+      echo "##"
+      echo "## Continuing the build anyway, but you were warned..."
+      echo "## Sleeping for 5 seconds, press <Ctrl>-C if you want to abort now."
+      echo "##"
+      sleep 5
+   else
+      echo "##"
+      echo "## Aborting the build - set the internal script variable:"
+      echo "##"
+      echo "##   'REQUIRE_FONTFORGE' to a value of 'NO'"
+      echo "##"
+      echo "## if you don't want to use fontforge to generate TTF fonts."
+      echo "##"
+      exit 1
+   fi
+fi
+
+cd ${TMP}/tmp-${PRGNAM}
+
+echo -e "\E[0;32m+-----------------------------------------------------+\E[0;0m"
+echo -e "\E[0;32m|  Extracting the source archive(s) for ${PRGNAM}...  |\E[0;0m"
+echo -e "\E[0;32m+-----------------------------------------------------+\E[0;0m"
+tar -xJvf ${SOURCE}
+[ "${SRCVER}" != "${VERSION}" ] && mv ${PRGNAM}-${SRCVER} ${PRGNAM}-${VERSION}
+cd ${PRGNAM}-${VERSION}
+
+# Change user permission
+chown -R root:root .
+find . \
+ \( -perm 777 -o -perm 775 -o -perm 711 -o -perm 555 -o -perm 511 \) \
+ -exec chmod 755 {} \; -o \
+ \( -perm 666 -o -perm 664 -o -perm 600 -o -perm 444 -o -perm 440 -o -perm 400 \) \
+ -exec chmod 644 {} \;
+
+echo -e "\E[0;32m+-----------------------+\E[0;0m"
+echo -e "\E[0;32m|      Building ...     |\E[0;0m"
+echo -e "\E[0;32m+-----------------------+\E[0;0m"
+
+# Enable or disable opengl in accord to OPENGL variable value.
+if [ "$OPENGL" = "YES" ]; then
+   OPENGL_WITH="with"
+   else
+   OPENGL_WITH="without"
+fi
+
+# Enable or disable Wayland
+WAYLAND_WITH="without"
+
+# Create a directory where to build source.
+cd ${TMP}/tmp-${PRGNAM}
+mkdir ${PRGNAM}
+
+# Erik
+git clone --branch v${SRCVER} https://gitlab.winehq.org/wine/wine-staging.git
+
+wget http://dl.winehq.org/wine/wine-mono/${MONO}/wine-mono-${MONO}-x86.tar.xz
+tar -xvf wine-mono-${MONO}-x86.tar.xz
+
+wget http://dl.winehq.org/wine/wine-gecko/${GECKO}/wine-gecko-${GECKO}-x86.tar.xz
+tar -xvf wine-gecko-${GECKO}-x86.tar.xz
+
+wget http://dl.winehq.org/wine/wine-gecko/${GECKO}/wine-gecko-${GECKO}-x86_64.tar.xz
+tar -xvf wine-gecko-${GECKO}-x86_64.tar.xz
+
+cd ${TMP}/tmp-${PRGNAM}/wine-staging
+set +e
+./staging/patchinstall.py --ignore-missing DESTDIR="${TMP}/tmp-${PRGNAM}/${PRGNAM}-${VERSION}/" --all
+set -e
+
+# /Erik
+cd ../${PRGNAM}
+
+LDFLAGS="${SLKLDFLAGS}" \
+CFLAGS="${SLKCFLAGS}" \
+CXXFLAGS="${SLKCFLAGS}" \
+../${PRGNAM}-${VERSION}/configure --enable-archs=i386,x86_64 \
+   --prefix=/usr \
+   --localstatedir=/var \
+   --libdir=/usr/lib${LIBDIRSUFFIX} \
+   --sysconfdir=/etc \
+   --mandir=/usr/man \
+   --with-x \
+   --with-gnutls \
+   --${OPENGL_WITH}-opengl \
+   --${WAYLAND_WITH}-wayland \
+   --program-prefix= \
+   --program-suffix= \
+   --build=${BUILD_ARCH} \
+   2>&1 | tee ${OUTPUT}/${PRGNAM}_configure.log
+make -j${NUMJOBS} depend 2>&1 | tee ${OUTPUT}/${PRGNAM}_make.log
+make -j${NUMJOBS} 2>&1 | tee -a ${OUTPUT}/${PRGNAM}_make.log
+make install DESTDIR=${PKG} 2>&1 |tee ${OUTPUT}/${PRGNAM}_install.log
+
+# Install the font converter programs in /usr/bin.
+install -m 755 tools/sfnt2fon/sfnt2fon ${PKG}/usr/bin
+
+# Install wine-gecko
+  mkdir -p ${PKG}/usr/share/wine/gecko
+  mv -i ${TMP}/tmp-${PRGNAM}/wine-gecko-${GECKO}-x86 ${PKG}/usr/share/wine/gecko
+  mv -i ${TMP}/tmp-${PRGNAM}/wine-gecko-${GECKO}-x86_64 ${PKG}/usr/share/wine/gecko
+
+# Install mono
+  mkdir -p ${PKG}/usr/share/wine/mono
+  mv -i ${TMP}/tmp-${PRGNAM}/wine-mono-$MONO ${PKG}/usr/share/wine/mono
+
+# Strip binaries
+  find . | xargs file | grep "executable" | grep ELF | cut -f 1 -d : | xargs strip --strip-unneeded 2> /dev/null
+  find . | xargs file | grep "shared object" | grep ELF | cut -f 1 -d : | xargs strip --strip-unneeded 2> /dev/null
+
+# Compress man pages  
+if [ -d usr/man ]; then
+  find usr/man -type f -name "*.?" -exec gzip -9f {} \;
+  for i in `find usr/man -type l -name "*.?"` ; do ln -s $( readlink $i ).gz $i.gz ; rm $i ; done
+fi
+if [ -d usr/share/man ]; then
+  find usr/share/man -type f -name "*.?" -exec gzip -9f {} \;
+  for i in `find usr/share/man -type l -name "*.?"` ; do ln -s $( readlink $i ).gz $i.gz ; rm $i ; done
+fi
+
+# Remove .la files
+if [ -d usr/lib64 ]; then
+  find usr/lib64 -type f -name "*.la" -exec rm {} \;
+fi
+
+# Add some icons to the package.
+if [[ -e ${SRCDIR}/winecfg_64.png ]]; then
+   mkdir -p ${PKG}/usr/share/pixmaps
+   cp -a ${SRCDIR}/winecfg_64.png ${PKG}/usr/share/pixmaps/winecfg.png
+fi
+if  [[ -e ${SRCDIR}/winecfg.svg ]]; then
+   mkdir -p ${PKG}/usr/share/icons/hicolor/scalable/apps
+   cp ${SRCDIR}/winecfg.svg ${PKG}/usr/share/icons/hicolor/scalable/apps/winecfg.svg
+fi
+
+# Add a desktop menu entry for the winecfg program.
+mkdir -p ${PKG}/usr/share/applications
+cat <<-_EOT_ > ${PKG}/usr/share/applications/winecfg.desktop
+[Desktop Entry]
+Categories=Application;Settings;
+Comment=Settings Tool for WINE.
+Encoding=UTF-8
+Exec=winecfg
+Icon=winecfg
+Name=Wine Configuration
+Terminal=false
+Type=Application
+_EOT_
+
+# Build a package dependency list.
+cd ${PKG}
+# If a dependency list is included in the sources archive, use it.
+if [[ -f ${SRCDIR}/slack-required ]]; then
+   cat ${SRCDIR}/slack-required > ${PKG}/install/slack-required
+fi
+
+# Build the package in txz or tgz format.
+cd ${PKG}
+makepkg --linkadd y --chown n ${OUTPUT}/${PRGNAM}-${VERSION}-${ARCH}-${BUILD}${TAG}.${PKG_FORMAT} 2>&1 | tee ${OUTPUT}/${PRGNAM}_makepkg.log
+# Calculate hash files for the package.
+cd ${OUTPUT}
+md5sum ${PRGNAM}-${VERSION}-${ARCH}-${BUILD}${TAG}.${PKG_FORMAT} > ${PRGNAM}-${VERSION}-${ARCH}-${BUILD}${TAG}.${PKG_FORMAT}.md5
+shasum -a 512 ${PRGNAM}-${VERSION}-${ARCH}-${BUILD}${TAG}.${PKG_FORMAT} > ${PRGNAM}-${VERSION}-${ARCH}-${BUILD}${TAG}.${PKG_FORMAT}.SHA512
